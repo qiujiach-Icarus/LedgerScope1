@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Card, Row, Col, Upload, Typography, Table, Tag, Space, Alert, Statistic, Progress, message } from 'antd';
+import { Card, Row, Col, Upload, Typography, Table, Tag, Space, Alert, Statistic, Progress, message, Radio } from 'antd';
 import { UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
 import axios from 'axios';
+import { useProjectStore } from '../store/project';
 
 const { Dragger } = Upload;
 const { Title, Text } = Typography;
@@ -9,6 +10,9 @@ const { Title, Text } = Typography;
 const UploadPage: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [appendMode, setAppendMode] = useState<'append' | 'replace'>('append');
+  const { activeProjectId, projects, loadProjects } = useProjectStore();
+  const activeProject = projects.find(p => p.id === activeProjectId);
 
   const historyData = [
     { key: '1', name: 'test_data.xlsx（示例）', time: '2026-09-05 16:00', status: 'success', anomalies: 8, total: 242 },
@@ -78,12 +82,15 @@ const UploadPage: React.FC = () => {
       setResult(null);
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('project_id', activeProjectId || '');
+      formData.append('append', String(appendMode === 'append'));
       try {
         const res = await axios.post('/api/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           timeout: 300000,
         });
         setResult(res.data);
+        await loadProjects();
         message.success(`文件 "${file.name}" 分析完成！`);
         onSuccess?.(res.data);
       } catch (e: any) {
@@ -143,6 +150,15 @@ const UploadPage: React.FC = () => {
             }
             extra={<Tag color="blue" icon={<ShieldCheck size={12} />}>离线安全处理</Tag>}
           >
+            <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <Text style={{ color: '#9ca3af' }}>
+                存入项目：<Tag color="cyan" bordered={false} style={{ margin: 0 }}>{activeProject?.name || '默认项目'}</Tag>
+              </Text>
+              <Radio.Group value={appendMode} onChange={e => setAppendMode(e.target.value)} size="small">
+                <Radio.Button value="append">追加为多数据集（合并分析）</Radio.Button>
+                <Radio.Button value="replace">替换项目数据（单数据集）</Radio.Button>
+              </Radio.Group>
+            </div>
             <Dragger {...uploadProps} style={{ 
               background: 'transparent', 
               border: '2px dashed #374151', 

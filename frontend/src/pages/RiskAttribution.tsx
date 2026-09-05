@@ -4,6 +4,7 @@ import { Target, Activity, AlertTriangle, TrendingUp, Fingerprint, PieChart as P
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
 import type { ColumnsType } from 'antd/es/table';
+import { useProjectStore } from '../store/project';
 
 const { Title, Text } = Typography;
 
@@ -37,13 +38,18 @@ const RiskAttribution: React.FC = () => {
   const [report, setReport] = useState<string>('');
   const [reportMeta, setReportMeta] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const activeProjectId = useProjectStore(s => s.activeProjectId);
 
   useEffect(() => {
-    axios.get('/api/analytics/tree-trace').then(r => setTreeTrace(r.data)).catch(() => {});
-    axios.get('/api/vouchers', { params: { limit: 200, risk_min: 0 } })
+    setReport('');
+    setReportMeta(null);
+    setSelectedVoucher(undefined);
+    axios.get('/api/analytics/tree-trace', { params: { project_id: activeProjectId } })
+      .then(r => setTreeTrace(r.data)).catch(() => {});
+    axios.get('/api/vouchers', { params: { limit: 200, risk_min: 0, project_id: activeProjectId } })
       .then(r => { if (Array.isArray(r.data) && r.data.length) setVouchers(r.data); })
       .catch(() => {});
-  }, []);
+  }, [activeProjectId]);
 
   // 异常凭证
   const anomalyRows = vouchers.length ? vouchers.filter(v => v.是否异常) : [];
@@ -241,7 +247,7 @@ const RiskAttribution: React.FC = () => {
   const generateReport = async () => {
     setLoading(true);
     try {
-      const res = await axios.post('/api/agent/attribution', selectedVoucher ? { voucher_id: selectedVoucher } : {});
+      const res = await axios.post('/api/agent/attribution', selectedVoucher ? { voucher_id: selectedVoucher, project_id: activeProjectId } : { project_id: activeProjectId });
       setReport(res.data.report);
       setReportMeta(res.data);
     } catch (e: any) {

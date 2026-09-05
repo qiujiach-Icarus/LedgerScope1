@@ -3,15 +3,19 @@ import { Row, Col, Card, Statistic, Typography } from 'antd';
 import { TrendingUp, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
+import { useProjectStore } from '../store/project';
 
 const { Title, Text } = Typography;
 
 const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
+  const activeProjectId = useProjectStore(s => s.activeProjectId);
 
   useEffect(() => {
-    axios.get('/api/stats/dashboard').then(r => setStats(r.data)).catch(() => {});
-  }, []);
+    axios.get('/api/stats/dashboard', { params: { project_id: activeProjectId } })
+      .then(r => setStats(r.data))
+      .catch(() => {});
+  }, [activeProjectId]);
 
   const trendOption = {
     backgroundColor: 'transparent',

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -6,6 +6,8 @@ from pydantic import BaseModel
 import pandas as pd
 import os
 import shutil
+import uuid
+from datetime import datetime
 from typing import List, Optional
 
 from dotenv import load_dotenv
@@ -35,21 +37,181 @@ pattern_service = PatternService(alpha=0.7)
 anomaly_service = AnomalyService(contamination=0.03, n_estimators=100)
 reporting_service = ReportingService()
 
-# 全局数据缓存（实际生产应使用数据库）
-CACHE = {
-    "last_result": None,
-    "last_stats": None,
-    "prep_info": None,
-    "last_file": None,
-    "tables": {}
+# 项目级数据缓存（演示版使用进程内存；生产环境建议替换为数据库/对象存储）
+DEFAULT_PROJECT_ID = "default"
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _new_project(project_id: str, name: str) -> dict:
+    now = _now()
+    return {
+        "id": project_id,
+        "name": name,
+        "created_at": now,
+        "updated_at": now,
+        "datasets": [],
+        "last_result": None,
+        "last_stats": None,
+        "tree_trace": None,
+        "prep_info": None,
+        "last_file": None,
+        "tables": {},
+        "agent_memory": [],
+    }
+
+
+PROJECTS: dict[str, dict] = {
+    DEFAULT_PROJECT_ID: _new_project(DEFAULT_PROJECT_ID, "默认项目")
 }
+ACTIVE_PROJECT_ID = DEFAULT_PROJECT_ID
+
+# 兼容旧接口语义：默认指向当前激活项目
+CACHE = PROJECTS[DEFAULT_PROJECT_ID]
 
 attribution_agent = AttributionAgent()
 
+
+def _project_summary(project: dict) -> dict:
+    df = project.get("last_result")
+    return {
+        "id": project["id"],
+        "name": project["name"],
+        "created_at": project["created_at"],
+        "updated_at": project["updated_at"],
+        "dataset_count": len(project.get("datasets") or []),
+        "memory_count": len(project.get("agent_memory") or []),
+        "last_file": project.get("last_file"),
+        "total_count": 0 if df is None else int(len(df)),
+        "anomaly_count": 0 if df is None else int(df["是否异常"].sum()),
+        "avg_risk_score": 0 if df is None or df.empty else float(df["风险评分"].mean()),
+    }
+
+
+def _get_project(project_id: Optional[str] = None) -> dict:
+    pid = project_id or ACTIVE_PROJECT_ID or DEFAULT_PROJECT_ID
+    project = PROJECTS.get(pid)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"未找到项目 {pid}")
+    return project
+
+
+def _set_active_project(project_id: str) -> dict:
+    global ACTIVE_PROJECT_ID, CACHE
+    project = _get_project(project_id)
+    ACTIVE_PROJECT_ID = project["id"]
+    CACHE = project
+    return project
+
+
+def _load_dataset(temp_path: str, filename: str) -> dict:
+    tables = load_multi_table(temp_path)
+    if "会计凭证" in tables:
+        df_clean = tables["会计凭证"]
+        df_clean = df_clean[df_clean["amount"] > 0].copy().reset_index(drop=True)
+        prep_info = {
+            "clean_count": len(df_clean),
+            "meta_trace": {"多表加载": list(tables.keys())},
+        }
+    else:
+        tables = {}
+        df_clean, prep_info = ledger_service.process_excel(temp_path, save_to_db=True)
+
+    df_clean = df_clean.copy()
+    df_clean["project_dataset"] = filename
+    return {
+        "id": uuid.uuid4().hex,
+        "filename": filename,
+        "uploaded_at": _now(),
+        "df_clean": df_clean,
+        "tables": tables,
+        "prep_info": prep_info,
+    }
+
+
+def _merge_tables(datasets: list[dict]) -> dict[str, pd.DataFrame]:
+    merged: dict[str, list[pd.DataFrame]] = {}
+    for dataset in datasets:
+        for sheet, df in (dataset.get("tables") or {}).items():
+            merged.setdefault(sheet, []).append(df)
+    return {
+        sheet: pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+        for sheet, frames in merged.items()
+    }
+
+
+def _reprocess_project(project: dict) -> None:
+    datasets = project.get("datasets") or []
+    if not datasets:
+        project.update({
+            "last_result": None, "last_stats": None, "tree_trace": None,
+            "prep_info": None, "last_file": None, "tables": {},
+        })
+        return
+
+    df_clean = pd.concat([d["df_clean"] for d in datasets], ignore_index=True)
+    df_featured = pattern_service.analyze_patterns(df_clean)
+    project["last_stats"] = pattern_service.acc_stats
+
+    target_features = ["amount", "month", "day_of_week", "direction_code", "amount_deviation_ratio"]
+    project["last_result"] = anomaly_service.detect_anomalies(df_featured, feature_cols=target_features)
+    project["tree_trace"] = anomaly_service.tree_trace
+    project["tables"] = _merge_tables(datasets)
+    project["prep_info"] = {
+        "clean_count": int(len(df_clean)),
+        "dataset_count": len(datasets),
+        "meta_trace": {d["filename"]: d.get("prep_info", {}).get("meta_trace", {}) for d in datasets},
+    }
+    project["last_file"] = datasets[-1]["filename"]
+    project["updated_at"] = _now()
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+
+
+class ProjectActivateRequest(BaseModel):
+    project_id: str
+
+
+@app.get("/api/projects")
+async def list_projects():
+    return {
+        "active_project_id": ACTIVE_PROJECT_ID,
+        "projects": [_project_summary(p) for p in PROJECTS.values()],
+    }
+
+
+@app.post("/api/projects")
+async def create_project(req: ProjectCreateRequest):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="项目名称不能为空")
+    project_id = uuid.uuid4().hex[:12]
+    PROJECTS[project_id] = _new_project(project_id, name)
+    project = _set_active_project(project_id)
+    return _project_summary(project)
+
+
+@app.post("/api/projects/active")
+async def activate_project(req: ProjectActivateRequest):
+    project = _set_active_project(req.project_id)
+    return _project_summary(project)
+
+
 @app.post("/api/upload")
-async def upload_ledger(file: UploadFile = File(...)):
+async def upload_ledger(
+    file: UploadFile = File(...),
+    project_id: Optional[str] = Form(None),
+    append: bool = Form(True),
+):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only Excel files are supported")
+
+    project = _get_project(project_id)
+    _set_active_project(project["id"])
 
     temp_path = f"data/raw/temp_{file.filename}"
     os.makedirs("data/raw", exist_ok=True)
@@ -58,41 +220,26 @@ async def upload_ledger(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        CACHE["last_file"] = file.filename
+        dataset = _load_dataset(temp_path, file.filename)
+        if not append:
+            project["datasets"] = []
+            project["agent_memory"] = []
+        project["datasets"].append(dataset)
+        _reprocess_project(project)
 
-        # 1. 预处理：优先多表加载（华辰 11 类），否则回退单凭证表逻辑
-        tables = load_multi_table(temp_path)
-        if "会计凭证" in tables:
-            df_clean = tables["会计凭证"]
-            df_clean = df_clean[df_clean["amount"] > 0].copy().reset_index(drop=True)
-            CACHE["tables"] = tables
-            CACHE["prep_info"] = {
-                "clean_count": len(df_clean),
-                "meta_trace": {"多表加载": list(tables.keys())},
-            }
-        else:
-            CACHE["tables"] = {}
-            df_clean, info = ledger_service.process_excel(temp_path, save_to_db=True)
-            CACHE["prep_info"] = info
-
-        # 2. 统计模式
-        df_featured = pattern_service.analyze_patterns(df_clean)
-        CACHE["last_stats"] = pattern_service.acc_stats
-
-        # 3. 异常检测
-        target_features = ["amount", "month", "day_of_week", "direction_code", "amount_deviation_ratio"]
-        df_result = anomaly_service.detect_anomalies(df_featured, feature_cols=target_features)
-        CACHE["last_result"] = df_result
+        df_result = project["last_result"]
+        prep_info = project["prep_info"] or {}
 
         return {
             "status": "success",
+            "project": _project_summary(project),
             "summary": {
-                "total_count": CACHE["prep_info"]["clean_count"],
+                "total_count": prep_info["clean_count"],
                 "anomaly_count": int(df_result["是否异常"].sum()),
                 "avg_risk_score": float(df_result["风险评分"].mean())
             },
-            "table_types": list(tables.keys()),
-            "meta_trace": CACHE["prep_info"].get("meta_trace", {})
+            "table_types": list(project.get("tables", {}).keys()),
+            "meta_trace": prep_info.get("meta_trace", {})
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -105,18 +252,20 @@ async def upload_ledger(file: UploadFile = File(...)):
             pass
 
 @app.get("/api/vouchers")
-async def get_vouchers(limit: int = 50, risk_min: float = 0):
-    if CACHE["last_result"] is None:
+async def get_vouchers(limit: int = 50, risk_min: float = 0, project_id: Optional[str] = None):
+    project = _get_project(project_id)
+    if project["last_result"] is None:
         return []
 
-    df = CACHE["last_result"]
+    df = project["last_result"]
     filtered_df = df[df["风险评分"] >= risk_min].head(limit)
 
     return filtered_df.to_dict(orient="records")
 
 @app.get("/api/stats/dashboard")
-async def get_dashboard_stats():
-    if CACHE["last_result"] is None:
+async def get_dashboard_stats(project_id: Optional[str] = None):
+    project = _get_project(project_id)
+    if project["last_result"] is None:
         return {
             "total_vouchers": 0,
             "anomaly_vouchers": 0,
@@ -125,7 +274,7 @@ async def get_dashboard_stats():
             "risk_distribution": {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
         }
 
-    df = CACHE["last_result"]
+    df = project["last_result"]
     total = len(df)
     anomalies = int(df["是否异常"].sum())
     avg_score = float(df["风险评分"].mean())
@@ -147,20 +296,24 @@ async def get_dashboard_stats():
     }
 
 @app.get("/api/analytics/tree-trace")
-async def get_tree_trace():
-    return anomaly_service.tree_trace
+async def get_tree_trace(project_id: Optional[str] = None):
+    project = _get_project(project_id)
+    return project.get("tree_trace") or {}
 
 
 class AttributionRequest(BaseModel):
     voucher_id: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 @app.post("/api/agent/attribution")
 async def agent_attribution(req: Optional[AttributionRequest] = None):
-    if CACHE["last_result"] is None:
+    project = _get_project(req.project_id if req else None)
+    _set_active_project(project["id"])
+    if project["last_result"] is None:
         raise HTTPException(status_code=400, detail="尚未上传账本数据，请先上传 Excel 后再生成归因报告")
 
-    df = CACHE["last_result"]
+    df = project["last_result"]
     voucher_id = req.voucher_id if req else None
 
     if voucher_id:
@@ -172,17 +325,36 @@ async def agent_attribution(req: Optional[AttributionRequest] = None):
     else:
         row = df.iloc[0]  # df 已按风险评分降序，首行即最高风险
 
-    tables = CACHE.get("tables") or {}
+    tables = project.get("tables") or {}
     payload = build_risk_payload(row.to_dict(), tables)
+    payload["project"] = {
+        "id": project["id"],
+        "name": project["name"],
+        "datasets": [d["filename"] for d in project.get("datasets", [])],
+    }
+    payload["project_memory"] = project.get("agent_memory", [])[-5:]
 
     try:
         report = attribution_agent.analyze(payload)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"大模型调用失败：{e}")
 
-    return {
+    memory_item = {
+        "time": _now(),
         "voucher_id": normalize_voucher_id(row.get("voucher_id")),
         "risk_score": float(row.get("风险评分") or 0),
+        "summary": report[:800],
+    }
+    project.setdefault("agent_memory", []).append(memory_item)
+    project["agent_memory"] = project["agent_memory"][-20:]
+    project["updated_at"] = _now()
+
+    return {
+        "project_id": project["id"],
+        "project_name": project["name"],
+        "voucher_id": normalize_voucher_id(row.get("voucher_id")),
+        "risk_score": float(row.get("风险评分") or 0),
+        "memory_count": len(project.get("agent_memory", [])),
         "report": report,
     }
 

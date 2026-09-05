@@ -13,6 +13,7 @@ import {
   Target
 } from 'lucide-react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
+import ProjectSwitcher from './ProjectSwitcher';
 
 const { Header, Sider, Content } = Layout;
 
@@ -93,6 +94,7 @@ const MainLayout: React.FC = () => {
             style={{ width: 320, background: '#1f2937', border: 'none', color: '#fff' }}
           />
           <Space size={24}>
+            <ProjectSwitcher />
             <Tooltip title="系统通知">
               <Badge count={3} size="small">
                 <Bell size={20} color="#9ca3af" style={{ cursor: 'pointer' }} />

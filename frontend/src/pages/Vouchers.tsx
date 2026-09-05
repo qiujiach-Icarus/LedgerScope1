@@ -3,6 +3,7 @@ import { Table, Tag, Space, Input, Button, Card, Progress, message, Select } fro
 import { Search, Filter, RefreshCw, Info, FileText, Download } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import axios from 'axios';
+import { useProjectStore } from '../store/project';
 
 const { Option } = Select;
 
@@ -25,15 +26,16 @@ const Vouchers: React.FC = () => {
   const [data, setData] = useState<VoucherRecord[]>([]);
   const [keyword, setKeyword] = useState('');
   const [riskFilter, setRiskFilter] = useState<string>('all');
+  const activeProjectId = useProjectStore(s => s.activeProjectId);
 
   useEffect(() => {
     loadList();
-  }, []);
+  }, [activeProjectId]);
 
   const loadList = async () => {
     setLoading(true);
     try {
-      const res = await axios.get('/api/vouchers', { params: { limit: 100, risk_min: 0 } });
+      const res = await axios.get('/api/vouchers', { params: { limit: 100, risk_min: 0, project_id: activeProjectId } });
       if (Array.isArray(res.data) && res.data.length > 0) {
         setData(res.data);
       } else {
