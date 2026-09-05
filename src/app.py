@@ -22,6 +22,13 @@ from src.agent.infrastructure.guardrails import detect_prompt_injection, validat
 
 load_dotenv()
 
+# DeepSeek 大模型配置（用户可从前端设置页动态修改，初始取自 .env）
+LLM_SETTINGS = {
+    "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+    "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+    "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+}
+
 app = FastAPI(title="VoucherGuard AI API")
 
 # 允许跨域
@@ -134,17 +141,23 @@ def _set_active_project(project_id: str) -> dict:
 
 
 def _load_dataset(temp_path: str, filename: str) -> dict:
-    tables = load_multi_table(temp_path)
-    if "会计凭证" in tables:
-        df_clean = tables["会计凭证"]
-        df_clean = df_clean[df_clean["amount"] > 0].copy().reset_index(drop=True)
-        prep_info = {
-            "clean_count": len(df_clean),
-            "meta_trace": {"多表加载": list(tables.keys())},
-        }
-    else:
+    """按文件类型加载：CSV 走单表 DataFrame 清洗，Excel 优先多表加载。"""
+    if filename.lower().endswith(".csv"):
+        df_raw = pd.read_csv(temp_path)
         tables = {}
-        df_clean, prep_info = ledger_service.process_excel(temp_path, save_to_db=True)
+        df_clean, prep_info = ledger_service.process_dataframe(df_raw, save_to_db=True)
+    else:
+        tables = load_multi_table(temp_path)
+        if "会计凭证" in tables:
+            df_clean = tables["会计凭证"]
+            df_clean = df_clean[df_clean["amount"] > 0].copy().reset_index(drop=True)
+            prep_info = {
+                "clean_count": len(df_clean),
+                "meta_trace": {"多表加载": list(tables.keys())},
+            }
+        else:
+            tables = {}
+            df_clean, prep_info = ledger_service.process_excel(temp_path, save_to_db=True)
 
     df_clean = df_clean.copy()
     df_clean["project_dataset"] = filename
@@ -195,6 +208,42 @@ def _reprocess_project(project: dict) -> None:
     project["updated_at"] = _now()
 
 
+class LLMSettingsRequest(BaseModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+
+
+def _llm_settings_payload() -> dict:
+    return {
+        "api_key_set": bool(LLM_SETTINGS["api_key"]),
+        "base_url": LLM_SETTINGS["base_url"],
+        "model": LLM_SETTINGS["model"],
+    }
+
+
+@app.get("/api/settings/llm")
+async def get_llm_settings():
+    return _llm_settings_payload()
+
+
+@app.post("/api/settings/llm")
+async def update_llm_settings(req: LLMSettingsRequest):
+    if req.api_key and req.api_key.strip():
+        LLM_SETTINGS["api_key"] = req.api_key.strip()
+    if req.base_url and req.base_url.strip():
+        LLM_SETTINGS["base_url"] = req.base_url.strip()
+    if req.model and req.model.strip():
+        LLM_SETTINGS["model"] = req.model.strip()
+
+    attribution_agent.llm.configure(
+        api_key=LLM_SETTINGS["api_key"] or None,
+        base_url=LLM_SETTINGS["base_url"] or None,
+        model=LLM_SETTINGS["model"] or None,
+    )
+    return _llm_settings_payload()
+
+
 class ProjectCreateRequest(BaseModel):
     name: str
 
@@ -234,8 +283,8 @@ async def upload_ledger(
     project_id: Optional[str] = Form(None),
     append: bool = Form(True),
 ):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files are supported")
+    if not file.filename.lower().endswith(('.xlsx', '.xls', '.csv')):
+        raise HTTPException(status_code=400, detail="仅支持 Excel（.xlsx/.xls）或 CSV 文件")
 
     project = _get_project(project_id)
     _set_active_project(project["id"])

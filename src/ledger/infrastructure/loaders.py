@@ -88,6 +88,9 @@ class ExcelLoader:
             df["credit"] = credit_vals
             df["amount"] = np.maximum(debit_vals, credit_vals)
             df["direction"] = np.where(debit_vals >= credit_vals, "借", "贷")
+        elif "amount" in df.columns:
+            df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
+            df["direction"] = "借"
         elif "价税合计" in df.columns:
             df["amount"] = pd.to_numeric(df["价税合计"], errors="coerce").fillna(0)
             df["direction"] = "借"

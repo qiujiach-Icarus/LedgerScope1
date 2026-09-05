@@ -41,3 +41,23 @@ class LedgerService:
             "meta_trace": self.meta_trace
         }
         return df_final, info
+
+    def process_dataframe(self, df: pd.DataFrame, save_to_db: bool = False) -> tuple[pd.DataFrame, dict]:
+        """处理 CSV 等已读入的 DataFrame（单表），复用列名模糊匹配与维度构建。"""
+        df_norm, rename_map, _ = self.loader.normalize_columns(df)
+        if "voucher_id" in df_norm.columns:
+            df_norm = df_norm.dropna(subset=["voucher_id"]).copy()
+
+        df_final = self.loader.build_dimensions(df_norm, rename_map, excel_header_row=1, sheet_name="csv")
+        df_final = df_final[df_final["amount"] > 0].copy().reset_index(drop=True)
+        self.meta_trace = self.loader.meta_trace
+
+        if save_to_db:
+            self.repository.save_dataframe(df_final)
+
+        info = {
+            "raw_count": len(df),
+            "clean_count": len(df_final),
+            "meta_trace": self.meta_trace
+        }
+        return df_final, info

@@ -27,6 +27,16 @@ class DeepSeekLLM:
                 "请在项目根目录 .env 文件中填写（参考 .env.example）。"
             )
 
+    def configure(self, api_key: str | None = None, base_url: str | None = None, model: str | None = None) -> None:
+        """运行时更新 LLM 配置（用户在前端设置页输入后动态生效）。"""
+        if api_key:
+            self.api_key = api_key
+        if base_url:
+            self.base_url = base_url
+        if model:
+            self.model = model
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url) if self.api_key else None
+
     def chat(self, system: str, user: str, temperature: float = 0.3) -> str:
         """单次对话，返回模型文本输出。"""
         self._require_client()
