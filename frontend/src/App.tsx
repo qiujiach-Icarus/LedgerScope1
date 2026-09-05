@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Vouchers from './pages/Vouchers';
 import Explainability from './pages/Explainability';
+import RiskAttribution from './pages/RiskAttribution';
 
 const App: React.FC = () => {
   return (
@@ -15,6 +16,7 @@ const App: React.FC = () => {
           <Route path="upload" element={<Upload />} />
           <Route path="vouchers" element={<Vouchers />} />
           <Route path="explain" element={<Explainability />} />
+          <Route path="attribution" element={<RiskAttribution />} />
           <Route path="settings" element={
             <div style={{ 
               padding: '60px 20px', 

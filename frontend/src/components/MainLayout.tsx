@@ -4,12 +4,13 @@ import {
   LayoutDashboard, 
   UploadCloud, 
   FileText, 
-  SearchCode, 
+  SearchCode,
   Settings,
   Bell,
   Search,
   User,
-  ShieldCheck
+  ShieldCheck,
+  Target
 } from 'lucide-react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 
@@ -25,6 +26,7 @@ const MainLayout: React.FC = () => {
     { key: '/upload',  icon: <UploadCloud size={18} />,    label: '账本上传' },
     { key: '/vouchers',icon: <FileText size={18} />,       label: '凭证清单' },
     { key: '/explain', icon: <SearchCode size={18} />,     label: '可解释分析' },
+    { key: '/attribution', icon: <Target size={18} />,    label: '风险分析归因' },
     { key: '/settings',icon: <Settings size={18} />,       label: '系统设置' },
   ];
 

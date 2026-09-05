@@ -9,7 +9,7 @@ class ExcelLoader:
         self._build_reverse_map()
         self.summary_keywords = ["总表", "汇总", "总账", "合并"]
         self.detect_groups = [
-            ["借方", "贷方", "科目名称"],
+            ["借方", "贷方", "科目"],
             ["凭证号", "价税合计", "发票号码"]
         ]
         self.skip_sheets = ["工资"]
@@ -71,10 +71,23 @@ class ExcelLoader:
         return df, rename_map, unmatched
 
     def build_dimensions(self, df: pd.DataFrame, rename_map: dict, excel_header_row: int, sheet_name: str = "") -> pd.DataFrame:
-        if "debit" in df.columns:
-            df["debit"] = pd.to_numeric(df["debit"], errors="coerce").fillna(0)
-            df["amount"] = df["debit"]
-            df["direction"] = "借"
+        has_debit = "debit" in df.columns
+        has_credit = "credit" in df.columns
+
+        if has_debit or has_credit:
+            # 借贷双列（华辰会计凭证）：金额取较大者，方向按哪边非零判
+            debit_vals = (
+                pd.to_numeric(df["debit"], errors="coerce").fillna(0) if has_debit
+                else pd.Series(0.0, index=df.index)
+            )
+            credit_vals = (
+                pd.to_numeric(df["credit"], errors="coerce").fillna(0) if has_credit
+                else pd.Series(0.0, index=df.index)
+            )
+            df["debit"] = debit_vals
+            df["credit"] = credit_vals
+            df["amount"] = np.maximum(debit_vals, credit_vals)
+            df["direction"] = np.where(debit_vals >= credit_vals, "借", "贷")
         elif "价税合计" in df.columns:
             df["amount"] = pd.to_numeric(df["价税合计"], errors="coerce").fillna(0)
             df["direction"] = "借"
@@ -94,6 +107,8 @@ class ExcelLoader:
             df["date"] = pd.to_datetime(y + "-" + m + "-" + d, errors="coerce")
         elif "发票时间" in df.columns:
             df["date"] = pd.to_datetime(df["发票时间"], errors="coerce")
+        elif "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
         else:
             df["date"] = pd.NaT
 
@@ -117,9 +132,9 @@ class ExcelLoader:
             pd_header_idx = excel_row - 1
             try:
                 df_temp = pd.read_excel(file_path, sheet_name=sheet_name, header=pd_header_idx, nrows=5)
-                col_names = set(df_temp.columns)
+                col_names = [str(c) for c in df_temp.columns]
                 for group in self.detect_groups:
-                    hit = sum(1 for c in group if c in col_names)
+                    hit = sum(1 for kw in group if any(kw in c for c in col_names))
                     if hit >= 2:
                         return excel_row
             except Exception:
@@ -134,10 +149,10 @@ class ExcelLoader:
         df_raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=header_row - 1)
         if "摘要" in df_raw.columns:
             df_raw = df_raw[~df_raw["摘要"].astype(str).str.contains("合计|累计|结转")].copy()
-        
+
         df_norm, rename_log, _ = self.normalize_columns(df_raw)
         if "voucher_id" in df_norm.columns:
             df_norm = df_norm.dropna(subset=["voucher_id"]).copy()
-        
+
         df_final = self.build_dimensions(df_norm, rename_log, header_row, sheet_name)
         return df_final
