@@ -15,9 +15,17 @@ class AnomalyMLModel:
         n_samples = len(df)
 
         euler_gamma = 0.5772156649
-        c_n = 2 * (np.log(n_samples - 1) + euler_gamma) - (2 * (n_samples - 1) / n_samples)
+        c_n = (
+            2 * (np.log(n_samples - 1) + euler_gamma) - (2 * (n_samples - 1) / n_samples)
+            if n_samples > 1
+            else 0.0
+        )
 
-        self.model = IForest(contamination=self.contamination, random_state=self.random_state)
+        self.model = IForest(
+            contamination=self.contamination,
+            n_estimators=self.n_estimators,
+            random_state=self.random_state,
+        )
         self.model.fit(X)
 
         split_counts = {col: 0 for col in feature_cols}
@@ -35,7 +43,10 @@ class AnomalyMLModel:
         df["平均切分深度"] = np.round(depths, 2)
         raw_scores = self.model.decision_scores_
         s_min, s_max = raw_scores.min(), raw_scores.max()
-        df["风险评分"] = ((raw_scores - s_min) / (s_max - s_min) * 100).round(2)
+        if s_max - s_min > 1e-12:
+            df["风险评分"] = ((raw_scores - s_min) / (s_max - s_min) * 100).round(2)
+        else:
+            df["风险评分"] = 0.0
         df["是否异常"] = self.model.labels_
 
         self.tree_trace = {

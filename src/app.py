@@ -46,6 +46,28 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _clean_records(df: pd.DataFrame) -> list[dict]:
+    """把 DataFrame 转成 JSON 安全的记录列表，清洗 NaN 与时间戳。"""
+    records = []
+    for _, r in df.iterrows():
+        rec = {}
+        for col, val in r.items():
+            if val is None:
+                continue
+            try:
+                if pd.isna(val):
+                    continue
+            except (TypeError, ValueError):
+                pass
+            if isinstance(val, pd.Timestamp):
+                val = val.strftime("%Y-%m-%d")
+            elif isinstance(val, float):
+                val = round(val, 2)
+            rec[str(col)] = val
+        records.append(rec)
+    return records
+
+
 def _new_project(project_id: str, name: str) -> dict:
     now = _now()
     return {
@@ -265,7 +287,7 @@ async def get_vouchers(limit: int = 50, risk_min: float = 0, project_id: Optiona
     df = project["last_result"]
     filtered_df = df[df["风险评分"] >= risk_min].head(limit)
 
-    return filtered_df.to_dict(orient="records")
+    return _clean_records(filtered_df)
 
 @app.get("/api/stats/dashboard")
 async def get_dashboard_stats(project_id: Optional[str] = None):

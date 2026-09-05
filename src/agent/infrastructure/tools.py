@@ -118,12 +118,27 @@ def tool_three_way_compare(payload: dict, args: dict) -> dict:
     }
 
 
+def _safe_text(value: Any) -> str | None:
+    """安全转非空字符串，None/NaN/占位符返回 None。"""
+    if value is None:
+        return None
+    try:
+        if value != value:  # NaN
+            return None
+    except Exception:
+        pass
+    s = str(value).strip()
+    if s.lower() in ("", "nan", "none", "nat"):
+        return None
+    return s
+
+
 def tool_detect_duplicate_invoice(payload: dict, args: dict) -> dict:
     """在已接入的发票明细里按发票号查重。"""
     evidence = _evidence(payload)
     invoice_rows = (evidence.get("发票明细") or {}).get("rows") or []
-    nos = [str(v).strip() for v in _pick_column(invoice_rows, INVOICE_NO_COLUMNS)
-           if v not in (None, "", "nan", "None")]
+    nos = [s for v in _pick_column(invoice_rows, INVOICE_NO_COLUMNS)
+           if (s := _safe_text(v)) is not None]
     duplicates = {no: cnt for no, cnt in Counter(nos).items() if cnt > 1}
     return {
         "invoice_row_count": len(invoice_rows),
