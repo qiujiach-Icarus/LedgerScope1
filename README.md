@@ -2,7 +2,7 @@
 
 基于 **DDD 分层架构 + 白盒孤立森林 (iForest) 异常检测 + 可解释证据链穿透** 的财务凭证智能审计系统。
 
-提供 **CLI 命令行、桌面 GUI、Web API、React 前端** 四种一致的运行入口，所有入口共享同一套核心 4 阶段审计流水线，保证结果 100% 一致。
+提供 **Web API、React 前端** 两种一致的运行入口，所有入口共享同一套核心 4 阶段审计流水线，保证结果 100% 一致。
 
 ---
 
@@ -24,8 +24,6 @@
 
 ```
 fintech/
-├── main.py                 # 命令行入口：4 阶段完整流水线 + 内置测试数据
-├── gui_app.py              # 桌面 GUI (CustomTkinter)
 ├── src/app.py              # Web API (FastAPI) 入口     → http://localhost:8000
 │
 ├── config/column_synonyms.py    # Excel 字段字典
@@ -58,15 +56,7 @@ fintech/
 
 ## 🚀 快速开始
 
-### 方式一：命令行批处理（最快）
-
-```bash
-pip install -r requirements.txt
-python main.py
-```
-→ 输出 `data/output/透明审计工作底稿.xlsx`
-
-### 方式二：Web 本地部署（推荐）
+### Web 本地部署（推荐）
 
 **① 启动后端 API (端口 8000)**
 ```bash
@@ -83,12 +73,6 @@ npm run dev
 ```
 浏览器访问：http://localhost:5173/
 进入「账本上传」页面，选择 `data/raw/test_data.xlsx` 即可端到端体验完整审计流程。
-
-### 方式三：桌面 GUI
-
-```bash
-python gui_app.py
-```
 
 ---
 

@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: ledgerscope
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/stats/dashboard
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"

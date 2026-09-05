@@ -1,0 +1,10 @@
+.git
+.gitignore
+frontend/node_modules
+frontend/dist
+data/output/*
+__pycache__
+**/__pycache__
+*.pyc
+.env
+*.md

@@ -1,5 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import pandas as pd
 import os
 import shutil
@@ -118,6 +120,23 @@ async def get_dashboard_stats():
 @app.get("/api/analytics/tree-trace")
 async def get_tree_trace():
     return anomaly_service.tree_trace
+
+# ---------- 前端静态资源托管（生产部署）----------
+# 若存在 React 构建产物，则挂载并支持 SPA 路由回退；
+# 否则保持纯 API 模式（本地开发时由 Vite dev server 代理 /api）。
+FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+
+if os.path.isdir(FRONTEND_DIST):
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        candidate = os.path.join(FRONTEND_DIST, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
 
 if __name__ == "__main__":
     import uvicorn
