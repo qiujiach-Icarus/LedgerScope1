@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Row, Col, Card, Statistic, Typography, Table, Tag, Space, Progress, Button, Select, message } from 'antd';
+import { Row, Col, Card, Statistic, Typography, Table, Tag, Space, Progress, Button, Select, message, Alert } from 'antd';
 import { Target, Activity, AlertTriangle, TrendingUp, Fingerprint, PieChart as PieIcon, Sparkles } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
@@ -37,6 +37,10 @@ const RiskAttribution: React.FC = () => {
   const [selectedVoucher, setSelectedVoucher] = useState<string | undefined>(undefined);
   const [report, setReport] = useState<string>('');
   const [reportMeta, setReportMeta] = useState<any>(null);
+  const [steps, setSteps] = useState<any[]>([]);
+  const [findingId, setFindingId] = useState<string>('');
+  const [findingStatus, setFindingStatus] = useState<string>('');
+  const [violations, setViolations] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const activeProjectId = useProjectStore(s => s.activeProjectId);
 
@@ -244,16 +248,43 @@ const RiskAttribution: React.FC = () => {
     label: `#${r.voucher_id} · ${r.account || '-'} · 风险 ${r.风险评分 ?? '-'}`,
   }));
 
+  const SPECIALIST_LABELS: Record<string, string> = {
+    voucher: '凭证专家',
+    invoice: '发票专家',
+    bank: '银行流水专家',
+    statement: '报表专家',
+    vendor: '供应商/客户专家',
+  };
+
   const generateReport = async () => {
     setLoading(true);
+    setSteps([]);
+    setFindingId('');
+    setFindingStatus('');
+    setViolations([]);
     try {
       const res = await axios.post('/api/agent/attribution', selectedVoucher ? { voucher_id: selectedVoucher, project_id: activeProjectId } : { project_id: activeProjectId });
       setReport(res.data.report);
       setReportMeta(res.data);
+      setSteps(res.data.steps || []);
+      setFindingId(res.data.finding_id || '');
+      setFindingStatus(res.data.status || 'draft');
+      setViolations(res.data.violations || []);
     } catch (e: any) {
       message.error(e?.response?.data?.detail || '归因报告生成失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const updateFindingStatus = async (status: 'confirmed' | 'rejected') => {
+    if (!findingId) return;
+    try {
+      await axios.post(`/api/findings/${findingId}/status`, { status });
+      setFindingStatus(status);
+      message.success(status === 'confirmed' ? '已确认该审计发现' : '已驳回该审计发现');
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '状态更新失败');
     }
   };
 
@@ -357,14 +388,73 @@ const RiskAttribution: React.FC = () => {
       </Card>
 
       {report && (
-        <Card
-          title={<span style={{ color: '#fff' }}><Sparkles size={16} style={{ marginRight: 8, verticalAlign: 'middle', color: '#06b6d4' }} /> AI 归因报告{reportMeta ? ` · #${reportMeta.voucher_id}` : ''}</span>}
-          style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: 12, marginTop: 20 }}
-        >
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#e5e7eb', margin: 0, fontFamily: 'inherit', lineHeight: 1.8, fontSize: 14 }}>
-            {report}
-          </pre>
-        </Card>
+        <>
+          {steps.length > 0 && (
+            <Card
+              title={<span style={{ color: '#fff' }}><Sparkles size={16} style={{ marginRight: 8, verticalAlign: 'middle', color: '#06b6d4' }} /> Agent 审计过程（规划 → 调用 → 结论）</span>}
+              style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: 12, marginTop: 20 }}
+            >
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                {steps.map((step, i) => (
+                  <div key={i} style={{ background: '#1f2937', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <Tag color="cyan" bordered={false}>{SPECIALIST_LABELS[step.specialist] || step.specialist}</Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{step.tool_calls?.length || 0} 次工具调用</Text>
+                    </div>
+                    {(step.tool_calls || []).map((tc: any, j: number) => (
+                      <div key={j} style={{ marginBottom: 8, padding: '8px 10px', background: '#111827', borderRadius: 6 }}>
+                        <div style={{ color: '#93c5fd', fontFamily: 'monospace', fontSize: 13, marginBottom: 4 }}>
+                          调用 {tc.tool}{tc.args ? `(${tc.args})` : ''}
+                        </div>
+                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#9ca3af', margin: 0, fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}>
+                          {JSON.stringify(tc.result, null, 2)}
+                        </pre>
+                      </div>
+                    ))}
+                    <div style={{ color: '#e5e7eb', fontSize: 13, lineHeight: 1.7 }}>{step.conclusion}</div>
+                  </div>
+                ))}
+              </Space>
+            </Card>
+          )}
+
+          <Card
+            title={
+              <span style={{ color: '#fff' }}>
+                <Sparkles size={16} style={{ marginRight: 8, verticalAlign: 'middle', color: '#06b6d4' }} />
+                AI 归因报告{reportMeta ? ` · #${reportMeta.voucher_id}` : ''}
+              </span>
+            }
+            extra={
+              findingId ? (
+                <Space>
+                  <Tag color={findingStatus === 'confirmed' ? 'green' : findingStatus === 'rejected' ? 'red' : 'gold'} bordered={false}>
+                    {findingStatus === 'confirmed' ? '已确认' : findingStatus === 'rejected' ? '已驳回' : '待确认'}
+                  </Tag>
+                  {findingStatus !== 'confirmed' && (
+                    <Button size="small" type="primary" style={{ background: '#10b981', borderColor: '#10b981' }} onClick={() => updateFindingStatus('confirmed')}>确认</Button>
+                  )}
+                  {findingStatus !== 'rejected' && (
+                    <Button size="small" danger onClick={() => updateFindingStatus('rejected')}>驳回</Button>
+                  )}
+                </Space>
+              ) : null
+            }
+            style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: 12, marginTop: 20 }}
+          >
+            {violations.length > 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12, background: '#451a03', border: '1px solid #9a3412', borderRadius: 8 }}
+                message={<span style={{ color: '#fdba74' }}>输出护栏触发：{violations.join('、')}</span>}
+              />
+            )}
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: '#e5e7eb', margin: 0, fontFamily: 'inherit', lineHeight: 1.8, fontSize: 14 }}>
+              {report}
+            </pre>
+          </Card>
+        </>
       )}
 
       <style>{`

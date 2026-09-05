@@ -18,6 +18,7 @@ from src.anomaly.application.services import AnomalyService
 from src.reporting.application.services import ReportingService
 from src.agent.application.services import AttributionAgent
 from src.agent.application.payload import build_risk_payload, normalize_voucher_id
+from src.agent.infrastructure.guardrails import detect_prompt_injection, validate_output
 
 load_dotenv()
 
@@ -72,6 +73,10 @@ ACTIVE_PROJECT_ID = DEFAULT_PROJECT_ID
 CACHE = PROJECTS[DEFAULT_PROJECT_ID]
 
 attribution_agent = AttributionAgent()
+
+# P2：审计 finding（draft → confirmed/rejected）与 P5：追加式审计轨迹（演示版内存，生产换库）
+FINDINGS: dict[str, dict] = {}
+AUDIT_TRAIL: list[dict] = []
 
 
 def _project_summary(project: dict) -> dict:
@@ -334,11 +339,39 @@ async def agent_attribution(req: Optional[AttributionRequest] = None):
     }
     payload["project_memory"] = project.get("agent_memory", [])[-5:]
 
+    # P3 输入护栏：拦截凭证摘要/供应商名等字段中的提示词注入
+    injection = detect_prompt_injection(payload)
+    if injection:
+        raise HTTPException(status_code=400, detail=f"输入护栏拦截：{injection}")
+
     try:
-        report = attribution_agent.analyze(payload)
+        result = attribution_agent.analyze_with_trace(payload)
+        report = result["report"]
+        trace = result.get("steps", [])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"大模型调用失败：{e}")
 
+    # P3 输出护栏：拦截过度定性 / 越界表述
+    violations = validate_output(report)
+    if violations:
+        report = (
+            "> ⚠️ 输出护栏提示：检测到以下越界表述，请人工复核——"
+            + "、".join(violations)
+            + "\n\n"
+            + report
+        )
+
+    # P5 追加式审计轨迹（只追加，不删除）
+    AUDIT_TRAIL.append({
+        "time": _now(),
+        "project_id": project["id"],
+        "voucher_id": normalize_voucher_id(row.get("voucher_id")),
+        "specialists": result.get("specialists", []),
+        "steps": trace,
+        "violations": violations,
+    })
+
+    # 项目级共享记忆（保留旧字段，供后续归因复用）
     memory_item = {
         "time": _now(),
         "voucher_id": normalize_voucher_id(row.get("voucher_id")),
@@ -349,14 +382,63 @@ async def agent_attribution(req: Optional[AttributionRequest] = None):
     project["agent_memory"] = project["agent_memory"][-20:]
     project["updated_at"] = _now()
 
+    # P2 创建 finding（draft 状态，等待人工确认）
+    finding_id = uuid.uuid4().hex[:12]
+    FINDINGS[finding_id] = {
+        "id": finding_id,
+        "project_id": project["id"],
+        "voucher_id": normalize_voucher_id(row.get("voucher_id")),
+        "risk_score": float(row.get("风险评分") or 0),
+        "report": report,
+        "status": "draft",
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+
     return {
         "project_id": project["id"],
         "project_name": project["name"],
         "voucher_id": normalize_voucher_id(row.get("voucher_id")),
         "risk_score": float(row.get("风险评分") or 0),
+        "finding_id": finding_id,
+        "status": "draft",
         "memory_count": len(project.get("agent_memory", [])),
+        "specialists": result.get("specialists", []),
+        "steps": trace,
+        "violations": violations,
         "report": report,
     }
+
+
+class FindingStatusRequest(BaseModel):
+    status: str
+
+
+@app.get("/api/findings")
+async def list_findings(project_id: Optional[str] = None):
+    pid = project_id or ACTIVE_PROJECT_ID or DEFAULT_PROJECT_ID
+    items = [f for f in FINDINGS.values() if f["project_id"] == pid]
+    return {"findings": items}
+
+
+@app.post("/api/findings/{finding_id}/status")
+async def update_finding_status(finding_id: str, req: FindingStatusRequest):
+    finding = FINDINGS.get(finding_id)
+    if finding is None:
+        raise HTTPException(status_code=404, detail=f"未找到 finding {finding_id}")
+    if req.status not in ("confirmed", "rejected", "draft"):
+        raise HTTPException(status_code=400, detail="status 只能是 confirmed/rejected/draft")
+
+    finding["status"] = req.status
+    finding["updated_at"] = _now()
+    AUDIT_TRAIL.append({
+        "time": _now(),
+        "action": "finding_status",
+        "finding_id": finding_id,
+        "status": req.status,
+        "project_id": finding["project_id"],
+    })
+    return finding
 
 
 # ---------- 前端静态资源托管（生产部署）----------
