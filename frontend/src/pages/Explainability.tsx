@@ -1,12 +1,27 @@
 import React from 'react';
-import { Row, Col, Card, Typography, Space, Tag, Button, Select, Descriptions, Divider } from 'antd';
+import { Row, Col, Card, Typography, Space, Tag, Button, Select, Descriptions, Divider, message } from 'antd';
 import { SearchCode, Download, Zap, Lightbulb, FileCheck, Activity } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
+import { useNavigate } from 'react-router-dom';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 
 const Explainability: React.FC = () => {
+  const navigate = useNavigate();
+
+  const handleExport = () => {
+    const content = `# 异常可解释性分析报告\n\n## 凭证 #V-2023-001 · 风险评分 86 · 极度危险\n\n- 记账日期：2023-12-05（周二）\n- 涉及金额：¥125,000.00\n- 会计科目：差旅费 / 管理费用\n- 偏离倍数：4.20 倍\n\n## 模型诊断说明\n1. 金额严重偏离：差旅费科目 ¥125,000 达到科目均值 4.2 倍。\n2. 时间异常：入账时间为周日 23:45。\n3. 窗口期敏感：12 月年末属于费用突击高发期。\n4. 缓解因素：借贷对应关系正常。\n`;
+    const blob = new Blob(['\ufeff' + content], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '可解释性分析报告.md';
+    a.click();
+    URL.revokeObjectURL(url);
+    message.success('已导出解释报告');
+  };
+
   const waterfallOption = {
     backgroundColor: 'transparent',
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
@@ -90,8 +105,8 @@ const Explainability: React.FC = () => {
             <Option value="V-2023-002">凭证 #V-2023-002 【高风险】</Option>
             <Option value="V-2023-003">凭证 #V-2023-003 【中风险】</Option>
           </Select>
-          <Button icon={<Download size={16} />}>导出解释报告</Button>
-          <Button type="primary" icon={<Zap size={16} />} style={{ background: '#06b6d4' }}>重新深度分析</Button>
+          <Button icon={<Download size={16} />} onClick={handleExport}>导出解释报告</Button>
+          <Button type="primary" icon={<Zap size={16} />} style={{ background: '#06b6d4' }} onClick={() => navigate('/attribution')}>重新深度分析</Button>
         </Space>
       </div>
 

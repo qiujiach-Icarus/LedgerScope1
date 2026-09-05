@@ -3,6 +3,7 @@ import { Table, Tag, Space, Input, Button, Card, Progress, message, Select } fro
 import { Search, Filter, RefreshCw, Info, FileText, Download } from 'lucide-react';
 import type { ColumnsType } from 'antd/es/table';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '../store/project';
 
 const { Option } = Select;
@@ -27,6 +28,7 @@ const Vouchers: React.FC = () => {
   const [keyword, setKeyword] = useState('');
   const [riskFilter, setRiskFilter] = useState<string>('all');
   const activeProjectId = useProjectStore(s => s.activeProjectId);
+  const navigate = useNavigate();
 
   useEffect(() => {
     loadList();
@@ -69,6 +71,35 @@ const Vouchers: React.FC = () => {
     const matchRisk = riskFilter === 'all' ? true : riskLevel(r.风险评分).code === riskFilter;
     return matchKey && matchRisk;
   });
+
+  const handleExport = () => {
+    if (!filtered.length) {
+      message.info('当前无可导出数据');
+      return;
+    }
+    const headers = ['凭证号', '记账日期', '会计科目', '借贷', '金额', '偏离倍数', '风险评分', 'iForest隔离深度', '业务摘要', '异常原因诊断'];
+    const lines = filtered.map(r => [
+      r.voucher_id,
+      String(r.date || '').slice(0, 10),
+      r.account,
+      r.direction || '',
+      r.amount,
+      r.偏离倍数,
+      r.风险评分,
+      r.平均切分深度,
+      r.摘要 || '',
+      r.异常原因诊断 || '',
+    ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+    const csv = '\ufeff' + [headers.join(','), ...lines].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '凭证风险清单.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    message.success('已导出 CSV');
+  };
 
   const columns: ColumnsType<VoucherRecord> = [
     {
@@ -171,7 +202,7 @@ const Vouchers: React.FC = () => {
       fixed: 'right' as any,
       render: (_, r) => (
         <Space size="small">
-          <Button type="text" size="small" icon={<Info size={16} color="#06b6d4" />} onClick={() => message.info(`正在跳转至凭证 #${r.voucher_id} 的穿透分析...`)}>
+          <Button type="text" size="small" icon={<Info size={16} color="#06b6d4" />} onClick={() => navigate(`/explain?voucher_id=${r.voucher_id}`)}>
             穿透分析
           </Button>
         </Space>
@@ -209,9 +240,9 @@ const Vouchers: React.FC = () => {
             <Option value="medium">中风险</Option>
             <Option value="low">低风险</Option>
           </Select>
-          <Button icon={<Filter size={16} />} style={{ background: '#111827', border: '1px solid #1f2937', color: '#fff' }}>高级筛选</Button>
+          <Button icon={<Filter size={16} />} style={{ background: '#111827', border: '1px solid #1f2937', color: '#fff' }} onClick={() => message.info('高级筛选：请组合上方搜索框与风险等级筛选')}>高级筛选</Button>
           <Button icon={<RefreshCw size={16} />} onClick={loadList} loading={loading}>刷新</Button>
-          <Button icon={<Download size={16} />} type="primary" style={{ background: '#06b6d4' }}>导出Excel</Button>
+          <Button icon={<Download size={16} />} type="primary" style={{ background: '#06b6d4' }} onClick={handleExport}>导出Excel</Button>
         </Space>
       </div>
 

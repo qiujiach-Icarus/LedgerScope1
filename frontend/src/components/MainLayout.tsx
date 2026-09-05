@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout, Menu, Badge, Avatar, Space, Input, Tooltip } from 'antd';
+import { Layout, Menu, Badge, Avatar, Space, Input, Tooltip, message } from 'antd';
 import { 
   LayoutDashboard, 
   UploadCloud, 
@@ -92,15 +92,19 @@ const MainLayout: React.FC = () => {
             prefix={<Search size={16} color="#9ca3af" />}
             placeholder="搜索凭证号、科目、摘要..."
             style={{ width: 320, background: '#1f2937', border: 'none', color: '#fff' }}
+            onPressEnter={(e: any) => {
+              const kw = e?.target?.value?.trim?.();
+              navigate(kw ? `/vouchers?keyword=${encodeURIComponent(kw)}` : '/vouchers');
+            }}
           />
           <Space size={24}>
             <ProjectSwitcher />
             <Tooltip title="系统通知">
               <Badge count={3} size="small">
-                <Bell size={20} color="#9ca3af" style={{ cursor: 'pointer' }} />
+                <Bell size={20} color="#9ca3af" style={{ cursor: 'pointer' }} onClick={() => message.info('暂无更多通知，风险事项请前往「凭证清单」查看')} />
               </Badge>
             </Tooltip>
-            <Space size={8} style={{ cursor: 'pointer' }}>
+            <Space size={8} style={{ cursor: 'pointer' }} onClick={() => message.info('当前角色：审计管理员')}>
               <Avatar icon={<User size={16} />} size="small" style={{ background: '#06b6d4' }} />
               <span style={{ color: '#fff' }}>审计管理员</span>
             </Space>
