@@ -11,12 +11,11 @@ const UploadPage: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [appendMode, setAppendMode] = useState<'append' | 'replace'>('append');
+  const [historyData, setHistoryData] = useState<any[]>([
+    { key: '1', name: 'test_data.xlsx（示例）', time: '2026-09-05 16:00', status: 'success', anomalies: 8, total: 242 },
+  ]);
   const { activeProjectId, projects, loadProjects, bumpDataVersion } = useProjectStore();
   const activeProject = projects.find(p => p.id === activeProjectId);
-
-  const historyData = [
-    { key: '1', name: 'test_data.xlsx（示例）', time: '2026-09-05 16:00', status: 'success', anomalies: 8, total: 242 },
-  ];
 
   const columns = [
     { 
@@ -92,6 +91,18 @@ const UploadPage: React.FC = () => {
         setResult(res.data);
         await loadProjects();
         bumpDataVersion();
+        const summary = res.data?.summary || {};
+        setHistoryData(prev => [
+          {
+            key: `${Date.now()}`,
+            name: file.name,
+            time: new Date().toLocaleString('zh-CN', { hour12: false }),
+            status: 'success',
+            anomalies: summary.anomaly_count ?? 0,
+            total: summary.total_count ?? 0,
+          },
+          ...prev,
+        ]);
         message.success(`文件 "${file.name}" 分析完成！`);
         onSuccess?.(res.data);
       } catch (e: any) {
