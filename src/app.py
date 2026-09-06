@@ -70,6 +70,11 @@ def _clean_records(df: pd.DataFrame) -> list[dict]:
                 val = val.strftime("%Y-%m-%d")
             elif isinstance(val, float):
                 val = round(val, 2)
+            elif hasattr(val, "item"):
+                try:
+                    val = val.item()
+                except Exception:
+                    pass
             rec[str(col)] = val
         records.append(rec)
     return records

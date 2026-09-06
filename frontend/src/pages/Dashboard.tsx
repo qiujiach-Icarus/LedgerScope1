@@ -10,12 +10,13 @@ const { Title, Text } = Typography;
 const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
   const activeProjectId = useProjectStore(s => s.activeProjectId);
+  const dataVersion = useProjectStore(s => s.dataVersion);
 
   useEffect(() => {
     axios.get('/api/stats/dashboard', { params: { project_id: activeProjectId } })
       .then(r => setStats(r.data))
       .catch(() => {});
-  }, [activeProjectId]);
+  }, [activeProjectId, dataVersion]);
 
   const trendOption = {
     backgroundColor: 'transparent',

@@ -28,11 +28,12 @@ const Vouchers: React.FC = () => {
   const [keyword, setKeyword] = useState('');
   const [riskFilter, setRiskFilter] = useState<string>('all');
   const activeProjectId = useProjectStore(s => s.activeProjectId);
+  const dataVersion = useProjectStore(s => s.dataVersion);
   const navigate = useNavigate();
 
   useEffect(() => {
     loadList();
-  }, [activeProjectId]);
+  }, [activeProjectId, dataVersion]);
 
   const loadList = async () => {
     setLoading(true);

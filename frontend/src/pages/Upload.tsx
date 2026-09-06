@@ -11,7 +11,7 @@ const UploadPage: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [appendMode, setAppendMode] = useState<'append' | 'replace'>('append');
-  const { activeProjectId, projects, loadProjects } = useProjectStore();
+  const { activeProjectId, projects, loadProjects, bumpDataVersion } = useProjectStore();
   const activeProject = projects.find(p => p.id === activeProjectId);
 
   const historyData = [
@@ -91,6 +91,7 @@ const UploadPage: React.FC = () => {
         });
         setResult(res.data);
         await loadProjects();
+        bumpDataVersion();
         message.success(`文件 "${file.name}" 分析完成！`);
         onSuccess?.(res.data);
       } catch (e: any) {

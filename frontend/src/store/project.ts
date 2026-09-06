@@ -18,15 +18,18 @@ interface ProjectState {
   activeProjectId: string | null;
   projects: ProjectSummary[];
   loading: boolean;
+  dataVersion: number;
   loadProjects: () => Promise<void>;
   setActiveProject: (id: string) => Promise<void>;
   createProject: (name: string) => Promise<void>;
+  bumpDataVersion: () => void;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   activeProjectId: null,
   projects: [],
   loading: false,
+  dataVersion: 0,
 
   loadProjects: async () => {
     set({ loading: true });
@@ -57,4 +60,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ activeProjectId: created.id });
     await get().loadProjects();
   },
+
+  bumpDataVersion: () => set(s => ({ dataVersion: s.dataVersion + 1 })),
 }));

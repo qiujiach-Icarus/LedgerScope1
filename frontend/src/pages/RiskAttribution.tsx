@@ -43,6 +43,7 @@ const RiskAttribution: React.FC = () => {
   const [violations, setViolations] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const activeProjectId = useProjectStore(s => s.activeProjectId);
+  const dataVersion = useProjectStore(s => s.dataVersion);
 
   useEffect(() => {
     setReport('');
@@ -53,7 +54,7 @@ const RiskAttribution: React.FC = () => {
     axios.get('/api/vouchers', { params: { limit: 200, risk_min: 0, project_id: activeProjectId } })
       .then(r => { if (Array.isArray(r.data) && r.data.length) setVouchers(r.data); })
       .catch(() => {});
-  }, [activeProjectId]);
+  }, [activeProjectId, dataVersion]);
 
   // 异常凭证
   const anomalyRows = vouchers.length ? vouchers.filter(v => v.是否异常) : [];
