@@ -214,23 +214,6 @@ def _reprocess_project(project: dict) -> None:
     project["updated_at"] = _now()
 
 
-def _seed_default_project() -> None:
-    """启动时把本地测试数据写死加载进默认项目，便于本地直接演示，无需上传。"""
-    seed_path = "data/raw/test_data.xlsx"
-    if not os.path.exists(seed_path):
-        return
-    project = PROJECTS[DEFAULT_PROJECT_ID]
-    if project.get("last_result") is not None:
-        return
-    try:
-        dataset = _load_dataset(seed_path, os.path.basename(seed_path))
-        project["datasets"] = [dataset]
-        _reprocess_project(project)
-        print("已加载本地测试数据：data/raw/test_data.xlsx")
-    except Exception as e:
-        print(f"本地测试数据加载失败：{e}")
-
-
 class LLMSettingsRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
@@ -629,9 +612,6 @@ if os.path.isdir(FRONTEND_DIST):
         if full_path and os.path.isfile(candidate):
             return FileResponse(candidate)
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
-
-# 本地部署：启动即写死加载本地测试数据，无需上传
-_seed_default_project()
 
 if __name__ == "__main__":
     import uvicorn
