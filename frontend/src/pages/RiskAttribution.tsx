@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Row, Col, Card, Statistic, Typography, Table, Tag, Space, Progress, Button, Select, message, Alert } from 'antd';
-import { Target, Activity, AlertTriangle, TrendingUp, Fingerprint, PieChart as PieIcon, Sparkles } from 'lucide-react';
+import { Target, Activity, AlertTriangle, TrendingUp, Fingerprint, PieChart as PieIcon, Sparkles, Download } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
 import type { ColumnsType } from 'antd/es/table';
@@ -289,6 +289,22 @@ const RiskAttribution: React.FC = () => {
     }
   };
 
+  const handleExportReport = () => {
+    if (!report) {
+      message.info('请先生成归因报告');
+      return;
+    }
+    const title = reportMeta?.voucher_id ? `# AI 归因报告 · #${reportMeta.voucher_id}\n\n` : '';
+    const blob = new Blob(['\ufeff' + title + report], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `归因报告_${reportMeta?.voucher_id || 'default'}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    message.success('归因报告已导出');
+  };
+
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
@@ -427,19 +443,22 @@ const RiskAttribution: React.FC = () => {
               </span>
             }
             extra={
-              findingId ? (
-                <Space>
-                  <Tag color={findingStatus === 'confirmed' ? 'green' : findingStatus === 'rejected' ? 'red' : 'gold'} bordered={false}>
-                    {findingStatus === 'confirmed' ? '已确认' : findingStatus === 'rejected' ? '已驳回' : '待确认'}
-                  </Tag>
-                  {findingStatus !== 'confirmed' && (
-                    <Button size="small" type="primary" style={{ background: '#10b981', borderColor: '#10b981' }} onClick={() => updateFindingStatus('confirmed')}>确认</Button>
-                  )}
-                  {findingStatus !== 'rejected' && (
-                    <Button size="small" danger onClick={() => updateFindingStatus('rejected')}>驳回</Button>
-                  )}
-                </Space>
-              ) : null
+              <Space>
+                <Button size="small" icon={<Download size={16} />} onClick={handleExportReport}>导出</Button>
+                {findingId && (
+                  <>
+                    <Tag color={findingStatus === 'confirmed' ? 'green' : findingStatus === 'rejected' ? 'red' : 'gold'} bordered={false}>
+                      {findingStatus === 'confirmed' ? '已确认' : findingStatus === 'rejected' ? '已驳回' : '待确认'}
+                    </Tag>
+                    {findingStatus !== 'confirmed' && (
+                      <Button size="small" type="primary" style={{ background: '#10b981', borderColor: '#10b981' }} onClick={() => updateFindingStatus('confirmed')}>确认</Button>
+                    )}
+                    {findingStatus !== 'rejected' && (
+                      <Button size="small" danger onClick={() => updateFindingStatus('rejected')}>驳回</Button>
+                    )}
+                  </>
+                )}
+              </Space>
             }
             style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: 12, marginTop: 20 }}
           >
