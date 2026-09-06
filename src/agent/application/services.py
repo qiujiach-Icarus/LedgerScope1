@@ -127,7 +127,7 @@ class AttributionAgent:
         }
 
     def _report(self, context: dict, steps: list[dict]) -> str:
-        """汇总各专家结论，生成最终八段式报告。"""
+        """汇总各专家结论，生成最终八段式报告；LLM 无输出时用专家结论兜底。"""
         system = self.base_system_prompt + REPORT_USAGE
         user = json.dumps(
             {"risk_context": context, "specialist_findings": steps},
@@ -139,7 +139,19 @@ class AttributionAgent:
             {"role": "user", "content": user},
         ]
         msg = self.llm.chat_messages(messages)
-        return msg.content or ""
+        report = (msg.content or "").strip()
+
+        if not report:
+            conclusions = [
+                f"【{s.get('specialist', '专家')}】{s.get('conclusion', '')}"
+                for s in steps
+                if (s.get('conclusion') or '').strip()
+            ]
+            if conclusions:
+                report = "（模型未返回报告，以下为领域专家调查结论，供审计参考）\n\n" + "\n\n".join(conclusions)
+            else:
+                report = "（未能生成归因报告，请检查大模型配置或确认当前项目已上传账本数据。）"
+        return report
 
     def analyze_with_trace(self, payload: dict) -> dict:
         """返回报告文本 + 专家编排与工具调用 trace，供前端 Agent 化展示。"""

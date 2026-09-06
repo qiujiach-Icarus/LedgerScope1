@@ -294,14 +294,16 @@ async def upload_ledger(
     project = _get_project(project_id)
     _set_active_project(project["id"])
 
-    temp_path = f"data/raw/temp_{file.filename}"
-    os.makedirs("data/raw", exist_ok=True)
+    # 上传文件持久化保存到 data/raw，与内置 test_data.xlsx 同目录，便于复用与追溯
+    raw_dir = "data/raw"
+    os.makedirs(raw_dir, exist_ok=True)
+    save_path = os.path.join(raw_dir, file.filename)
 
-    with open(temp_path, "wb") as buffer:
+    with open(save_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        dataset = _load_dataset(temp_path, file.filename)
+        dataset = _load_dataset(save_path, file.filename)
         if not append:
             project["datasets"] = []
             project["agent_memory"] = []
@@ -324,13 +326,6 @@ async def upload_ledger(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except OSError:
-            # 删除临时文件失败不应影响已成功的处理结果
-            pass
 
 @app.get("/api/vouchers")
 async def get_vouchers(limit: int = 50, risk_min: float = 0, project_id: Optional[str] = None):
