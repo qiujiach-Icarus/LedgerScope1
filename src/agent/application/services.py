@@ -165,6 +165,68 @@ class AttributionAgent:
             "steps": steps,
         }
 
+    def analyze_stream(self, payload: dict):
+        """流式归因：逐步 yield 规划 / 专家 / 工具调用 / 结论 / 报告事件。"""
+        context = self._build_context(payload)
+
+        yield {"type": "stage", "stage": "plan", "message": "正在规划审计专家"}
+        specialists = self._plan(context)
+        yield {"type": "plan", "specialists": specialists}
+
+        steps: list[dict] = []
+        for name in specialists:
+            yield {"type": "specialist_start", "specialist": name}
+
+            tools = tool_schemas_for(SPECIALIST_TOOLS[name])
+            messages = [
+                {"role": "system", "content": SPECIALIST_PROMPTS[name] + TOOL_USAGE},
+                {"role": "user", "content": json.dumps(context, ensure_ascii=False, indent=2)},
+            ]
+
+            tool_calls_trace: list[dict] = []
+            conclusion = ""
+            for _ in range(MAX_TOOL_ROUNDS):
+                msg = self.llm.chat_messages(messages, tools=tools)
+                messages.append(msg)
+
+                calls = getattr(msg, "tool_calls", None)
+                if not calls:
+                    conclusion = msg.content or ""
+                    break
+
+                for tc in calls:
+                    args_json = tc.function.arguments
+                    result = execute_tool(tc.function.name, args_json, payload)
+                    tool_calls_trace.append({
+                        "tool": tc.function.name,
+                        "args": args_json,
+                        "result": result,
+                    })
+                    yield {
+                        "type": "tool_call",
+                        "specialist": name,
+                        "tool": tc.function.name,
+                        "args": args_json,
+                        "result": result,
+                    }
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    })
+
+            conclusion = conclusion or "（该专家未产出结论）"
+            steps.append({
+                "specialist": name,
+                "tool_calls": tool_calls_trace,
+                "conclusion": conclusion,
+            })
+            yield {"type": "specialist_done", "specialist": name, "conclusion": conclusion}
+
+        yield {"type": "stage", "stage": "report", "message": "正在汇总归因报告"}
+        report = self._report(context, steps)
+        yield {"type": "report", "report": report, "specialists": specialists, "steps": steps}
+
     def analyze(self, payload: dict) -> str:
         """兼容旧接口：只返回报告文本。"""
         return self.analyze_with_trace(payload)["report"]

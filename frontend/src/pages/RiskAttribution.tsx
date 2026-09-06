@@ -41,6 +41,8 @@ const RiskAttribution: React.FC = () => {
   const [findingId, setFindingId] = useState<string>('');
   const [findingStatus, setFindingStatus] = useState<string>('');
   const [violations, setViolations] = useState<string[]>([]);
+  const [progress, setProgress] = useState<any[]>([]);
+  const [currentStage, setCurrentStage] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const dataVersion = useProjectStore(s => s.dataVersion);
@@ -257,22 +259,79 @@ const RiskAttribution: React.FC = () => {
     vendor: '供应商/客户专家',
   };
 
+  const handleStreamEvent = (evt: any) => {
+    switch (evt.type) {
+      case 'stage':
+        setCurrentStage(evt.message || evt.stage || '');
+        break;
+      case 'plan':
+      case 'specialist_start':
+      case 'tool_call':
+      case 'specialist_done':
+        setProgress(prev => [...prev, evt]);
+        break;
+      case 'done':
+        setReport(evt.report || '');
+        setReportMeta(evt);
+        setSteps(evt.steps || []);
+        setFindingId(evt.finding_id || '');
+        setFindingStatus(evt.status || 'draft');
+        setViolations(evt.violations || []);
+        break;
+      case 'error':
+        message.error(evt.message || '归因报告生成失败');
+        break;
+    }
+  };
+
   const generateReport = async () => {
     setLoading(true);
     setSteps([]);
     setFindingId('');
     setFindingStatus('');
     setViolations([]);
+    setProgress([]);
+    setCurrentStage('');
+    setReport('');
+    setReportMeta(null);
+
+    const body = selectedVoucher
+      ? { voucher_id: selectedVoucher, project_id: activeProjectId }
+      : { project_id: activeProjectId };
+
     try {
-      const res = await axios.post('/api/agent/attribution', selectedVoucher ? { voucher_id: selectedVoucher, project_id: activeProjectId } : { project_id: activeProjectId });
-      setReport(res.data.report);
-      setReportMeta(res.data);
-      setSteps(res.data.steps || []);
-      setFindingId(res.data.finding_id || '');
-      setFindingStatus(res.data.status || 'draft');
-      setViolations(res.data.violations || []);
+      const res = await fetch('/api/agent/attribution/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok || !res.body) {
+        const detail = await res.text();
+        throw new Error(detail || '归因报告生成失败');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data) continue;
+          let evt: any;
+          try { evt = JSON.parse(data); } catch { continue; }
+          handleStreamEvent(evt);
+        }
+      }
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || '归因报告生成失败');
+      message.error(e?.message || '归因报告生成失败');
     } finally {
       setLoading(false);
     }
@@ -338,6 +397,29 @@ const RiskAttribution: React.FC = () => {
           生成 AI 归因报告
         </Button>
       </div>
+
+      {(loading || progress.length > 0) && (
+        <Card
+          title={<span style={{ color: '#fff' }}><Activity size={16} style={{ marginRight: 8, verticalAlign: 'middle', color: '#06b6d4' }} /> AI 归因分析进度</span>}
+          style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: 12, marginBottom: 20 }}
+        >
+          {currentStage && (
+            <div style={{ marginBottom: 10 }}>
+              <Tag color="processing" bordered={false}>{currentStage}</Tag>
+            </div>
+          )}
+          <Space direction="vertical" size={6} style={{ width: '100%' }}>
+            {progress.map((p, i) => (
+              <div key={i} style={{ fontSize: 13, color: '#d1d5db', lineHeight: 1.6 }}>
+                {p.type === 'plan' && <span>✅ 已规划专家：<span style={{ color: '#93c5fd' }}>{(p.specialists || []).join('、')}</span></span>}
+                {p.type === 'specialist_start' && <span>🔍 正在调用 <span style={{ color: '#f59e0b' }}>{SPECIALIST_LABELS[p.specialist] || p.specialist}</span>...</span>}
+                {p.type === 'tool_call' && <span>&nbsp;&nbsp;🛠 调用工具 <span style={{ color: '#93c5fd', fontFamily: 'monospace' }}>{p.tool}</span></span>}
+                {p.type === 'specialist_done' && <span>&nbsp;&nbsp;✅ {SPECIALIST_LABELS[p.specialist] || p.specialist} 完成</span>}
+              </div>
+            ))}
+          </Space>
+        </Card>
+      )}
 
       <Row gutter={[16, 16]}>
         {kpiCards.map((card, idx) => (

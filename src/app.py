@@ -1,12 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import pandas as pd
 import os
 import shutil
 import uuid
+import json
 from datetime import datetime
 from typing import List, Optional
 
@@ -382,8 +383,7 @@ class AttributionRequest(BaseModel):
     project_id: Optional[str] = None
 
 
-@app.post("/api/agent/attribution")
-async def agent_attribution(req: Optional[AttributionRequest] = None):
+def _prepare_attribution(req: Optional[AttributionRequest]):
     project = _get_project(req.project_id if req else None)
     _set_active_project(project["id"])
     if project["last_result"] is None:
@@ -414,6 +414,13 @@ async def agent_attribution(req: Optional[AttributionRequest] = None):
     injection = detect_prompt_injection(payload)
     if injection:
         raise HTTPException(status_code=400, detail=f"输入护栏拦截：{injection}")
+
+    return project, row, payload
+
+
+@app.post("/api/agent/attribution")
+async def agent_attribution(req: Optional[AttributionRequest] = None):
+    project, row, payload = _prepare_attribution(req)
 
     try:
         result = attribution_agent.analyze_with_trace(payload)
@@ -479,6 +486,83 @@ async def agent_attribution(req: Optional[AttributionRequest] = None):
         "violations": violations,
         "report": report,
     }
+
+
+@app.post("/api/agent/attribution/stream")
+async def agent_attribution_stream(req: Optional[AttributionRequest] = None):
+    project, row, payload = _prepare_attribution(req)
+
+    def event_stream():
+        final_report = ""
+        final_steps: list[dict] = []
+        final_specialists: list[str] = []
+        try:
+            for event in attribution_agent.analyze_stream(payload):
+                if event.get("type") == "report":
+                    final_report = event.get("report", "")
+                    final_steps = event.get("steps", [])
+                    final_specialists = event.get("specialists", [])
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            return
+
+        violations = validate_output(final_report)
+        if violations:
+            final_report = (
+                "> ⚠️ 输出护栏提示：检测到以下越界表述，请人工复核——"
+                + "、".join(violations)
+                + "\n\n"
+                + final_report
+            )
+
+        AUDIT_TRAIL.append({
+            "time": _now(),
+            "project_id": project["id"],
+            "voucher_id": normalize_voucher_id(row.get("voucher_id")),
+            "specialists": final_specialists,
+            "steps": final_steps,
+            "violations": violations,
+        })
+
+        memory_item = {
+            "time": _now(),
+            "voucher_id": normalize_voucher_id(row.get("voucher_id")),
+            "risk_score": float(row.get("风险评分") or 0),
+            "summary": final_report[:800],
+        }
+        project.setdefault("agent_memory", []).append(memory_item)
+        project["agent_memory"] = project["agent_memory"][-20:]
+        project["updated_at"] = _now()
+
+        finding_id = uuid.uuid4().hex[:12]
+        FINDINGS[finding_id] = {
+            "id": finding_id,
+            "project_id": project["id"],
+            "voucher_id": normalize_voucher_id(row.get("voucher_id")),
+            "risk_score": float(row.get("风险评分") or 0),
+            "report": final_report,
+            "status": "draft",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+
+        done_payload = {
+            "type": "done",
+            "finding_id": finding_id,
+            "status": "draft",
+            "project_id": project["id"],
+            "project_name": project["name"],
+            "voucher_id": normalize_voucher_id(row.get("voucher_id")),
+            "risk_score": float(row.get("风险评分") or 0),
+            "violations": violations,
+            "report": final_report,
+            "steps": final_steps,
+            "specialists": final_specialists,
+        }
+        yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 class FindingStatusRequest(BaseModel):
