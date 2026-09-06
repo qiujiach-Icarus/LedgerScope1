@@ -130,7 +130,7 @@ class ExcelLoader:
         df["source_sheet"] = sheet_name
         return df
 
-    def detect_header_row(self, file_path, sheet_name, candidate_rows=[1, 2, 3]):
+    def detect_header_row(self, file_path, sheet_name, candidate_rows=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
         for excel_row in candidate_rows:
             pd_header_idx = excel_row - 1
             try:
